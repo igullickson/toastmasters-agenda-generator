@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"slices"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -11,7 +13,7 @@ import (
 	"github.com/igullickson/toastmasters-agenda-generator/tmag/internal"
 )
 
-// maximum number of times to try generating a unique agenda compared to x previous agendas
+// maximum number of times to try generating a unique agenda compared to N previous agendas
 var maxTries = 50
 
 // maximum number of past agendas to compare for unique roles
@@ -41,37 +43,30 @@ var scheduleCmd = &cobra.Command{
 			schedule = make([]internal.Agenda, 0)
 		}
 
-		// generate new agenda
-		newAgenda, err := internal.RandomAgenda(roles, members)
+		// try to generate an agenda with unique roles
+		newAgenda, err := generateUniqueAgenda(roles, members, schedule)
+
+		tries := 1
+		for tries < maxTries && err != nil {
+			newAgenda, err = generateUniqueAgenda(roles, members, schedule)
+			tries++
+		}
+
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		// try to generate an agenda with unique roles
-		tries := 1
-		for tries < maxTries && repeatsRole(schedule, *newAgenda, maxNumberAgendasToCompare) {
-			newAgenda, err = internal.RandomAgenda(roles, members)
-			if err != nil {
-				log.Fatal(err)
-			}
-			tries++
-		}
-
-		if repeatsRole(schedule, *newAgenda, maxNumberAgendasToCompare) {
-			log.Printf("failed to generate agenda with unique roles compare to last %d agendas", maxNumberAgendasToCompare)
-		}
-
 		// prepend agenda to schedule
-		schedule = append([]internal.Agenda{*newAgenda}, schedule...)
+		schedule = append([]internal.Agenda{newAgenda}, schedule...)
 
 		marshalAndWrite(schedule, scheduleFile)
 
-		out, err := yaml.Marshal(*newAgenda)
+		out, err := yaml.Marshal(newAgenda)
 		if err != nil {
 			log.Fatal(err)
 			return
 		}
-		log.Printf("new agenda added to schedule after %d tries:\n\n%s\n", tries, out)
+		log.Printf("new agenda added to schedule after %d attempt(s):\n\n%s\n", tries, out)
 	},
 }
 
@@ -80,19 +75,53 @@ func init() {
 	scheduleCmd.PersistentFlags().StringVar(&scheduleFile, "scheduleFile", "schedule.yaml", "schedule file (default is schedule.yaml)")
 }
 
-// check whether an agenda repeats a role in the last `limit` agendas in the schedule
-func repeatsRole(schedule []internal.Agenda, target internal.Agenda, limit int) bool {
-	// ensure limit is within the bounds of the slice
-	if limit > len(schedule) {
-		limit = len(schedule)
-	}
+func generateUniqueAgenda(roles []string, members []string, schedule []internal.Agenda) (internal.Agenda, error) {
+	newAgenda := internal.NewAgenda()
 
-	for i := 0; i < limit; i++ {
-		if target.RepeatsRole(schedule[i]) {
-			return true
+	// Initialize map to track members assigned to each role in the previous N agendas
+	previousAssignments := make(map[string][]string)
+	for _, role := range roles {
+		previousAssignments[role] = make([]string, maxNumberAgendasToCompare+1)
+		for i := 0; i < maxNumberAgendasToCompare && i < len(schedule); i++ {
+			previousMember, err := schedule[i].GetMemberForRole(role)
+			if err != nil {
+				return newAgenda, err
+			}
+			previousAssignments[role] = append(previousAssignments[role], previousMember)
 		}
 	}
-	return false
+
+	assignedMembers := make([]string, len(members))
+
+	// Fill the agenda ensuring every member is assigned a different role
+	for _, role := range roles {
+		// Shuffle members to ensure randomness
+		internal.Shuffle(members)
+
+		// Find a member that hasn't been assigned the role in the last N agendas
+		var member string
+		for _, m := range members {
+			hasBeenAssigned := slices.Contains(assignedMembers, m)
+			wasPreviouslyAssigned := slices.Contains(previousAssignments[role], m)
+			if !hasBeenAssigned && !wasPreviouslyAssigned {
+				member = m
+				break
+			}
+		}
+
+		if member == "" {
+			return newAgenda, fmt.Errorf("could not find unique member for role %s", role)
+		}
+
+		// Assign the member to the role in the agenda
+		newAgenda.AddAssignment(role, member)
+
+		// Update roles assigned to the member in the previous agendas
+		previousAssignments[role] = append(previousAssignments[role], member)
+		assignedMembers = append(assignedMembers, member)
+	}
+
+	return newAgenda, nil
 }
 
 func marshalAndWrite(schedule []internal.Agenda, fileName string) {
