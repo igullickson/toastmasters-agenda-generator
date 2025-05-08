@@ -83,11 +83,16 @@ func generateUniqueAgenda(roles []string, members []string, schedule []internal.
 	for _, role := range roles {
 		previousAssignments[role] = make([]string, maxNumberAgendasToCompare+1)
 		for i := 0; i < maxNumberAgendasToCompare && i < len(schedule); i++ {
-			previousMember, err := schedule[i].GetMemberForRole(role)
-			if err != nil {
-				return newAgenda, err
+			if internal.IsSpeakerRole(role) {
+				previousSpeakers := schedule[i].GetSpeakers()
+				previousAssignments[role] = append(previousAssignments[role], previousSpeakers...)
+			} else {
+				previousMember, err := schedule[i].GetMemberForRole(role)
+				if err != nil {
+					return newAgenda, err
+				}
+				previousAssignments[role] = append(previousAssignments[role], previousMember)
 			}
-			previousAssignments[role] = append(previousAssignments[role], previousMember)
 		}
 	}
 

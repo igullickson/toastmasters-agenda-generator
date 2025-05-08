@@ -37,6 +37,22 @@ func NewAgenda() Agenda {
 	return Agenda{}
 }
 
+func IsSpeakerRole(role string) bool {
+	return strings.Contains(role, "speaker")
+}
+
+func (a *Agenda) GetSpeakers() []string {
+	speakers := []string{}
+	if a.Speaker1 != "" {
+		speakers = append(speakers, a.Speaker1)
+	}
+	if a.Speaker2 != "" {
+		speakers = append(speakers, a.Speaker2)
+	}
+
+	return speakers
+}
+
 func (a *Agenda) GetMemberForRole(role string) (string, error) {
 	roleLower := strings.ReplaceAll(strings.ToLower(role), " ", "")
 	var member string
